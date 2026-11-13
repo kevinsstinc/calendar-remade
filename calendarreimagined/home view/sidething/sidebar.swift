@@ -11,7 +11,16 @@ struct SideView: View {
     @State private var selected = 0
     @Namespace private var glass
 
-    let days = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+    private var startOfWeek: Date {
+        let cal = Calendar.current
+        let now = Date()
+        let components = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)
+        return cal.date(from: components) ?? now
+    }
+
+    private func date(for index: Int) -> Date {
+        Calendar.current.date(byAdding: .day, value: index, to: startOfWeek) ?? Date()
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -24,9 +33,13 @@ struct SideView: View {
                     GeometryReader { geo in
                         VStack(spacing: 0) {
                             ForEach(0..<7, id: \.self) { i in
+                                let d = date(for: i)
+                                let dayText = DateFormatter.weekdayAbbrev.string(from: d).uppercased()
+                                let dateText = DateFormatter.dayNumber.string(from: d)
+
                                 DateCard(
-                                    day: days[i],
-                                    date: "\(14 + i)",
+                                    day: dayText,
+                                    date: dateText,
                                     isSelected: selected == i
                                 )
                                 .frame(width: 70, height: 100)
@@ -54,9 +67,7 @@ struct SideView: View {
                                     let rowHeight = geo.size.height / 7
                                     guard rowHeight > 0 else { return }
 
-                                    let i = min(6, max(0,
-                                        Int(value.location.y / rowHeight)
-                                    ))
+                                    let i = min(6, max(0, Int(value.location.y / rowHeight)))
 
                                     if selected != i {
                                         withAnimation(.spring(response: 0.3)) {
@@ -68,14 +79,28 @@ struct SideView: View {
                     }
                 }
 
-            Spacer(minLength: 0)
+                .frame(width: 95)
+                
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxHeight: .infinity)
+        .onAppear { selected = Calendar.current.dateComponents([.day], from: startOfWeek, to: Date()).day.map { min(6, max(0, $0)) } ?? 0 }
     }
+}
+
+private extension DateFormatter {
+    static let dayNumber: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("d")
+        return f
+    }()
+    
+    static let weekdayAbbrev: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("EEE")
+        return f
+    }()
 }
 
 #Preview {
     SideView()
 }
-
-
