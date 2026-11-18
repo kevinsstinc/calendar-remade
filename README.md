@@ -4,11 +4,15 @@ an iphone calendar built with swiftui and eventkit. pick a day on the left, see 
 
 ## demo
 
-the screenshots use fictional events.
+the screenshots and recording use fictional events.
+
+the video shows the app in a mac catalyst preview.
 
 | agenda | event |
 | --- | --- |
 | <img src="docs/media/agenda.png" alt="weekly agenda" width="220"> | <img src="docs/media/event.png" alt="event details" width="220"> |
+
+[watch the screen recording](docs/media/demo.mp4)
 
 ## using it
 
@@ -24,5 +28,7 @@ events save to the calendars already set up on your iphone. allow full calendar 
 1. open `calendarreimagined.xcodeproj` in xcode with the ios 27 sdk installed.
 2. select the `calendarreimagined` scheme and an iphone simulator or connected iphone running ios 27 or later.
 3. select your signing team if running on a physical iphone, then run the app.
+
+the [unsigned ipa](https://github.com/kevinsstinc/calendar-remade/releases/tag/v1.0.0) needs signing before installation.
 
 the app uses a light appearance. read-only calendars can be viewed. edits and deletes to recurring events affect the selected occurrence. custom event colours and events saved by older local-only versions stay in the app.
