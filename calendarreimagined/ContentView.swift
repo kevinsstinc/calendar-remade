@@ -1,168 +1,233 @@
-//hello guys
-
-
+import EventKit
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
-
-    let events: [(color: Color, title: String, time: String, place: String)] = [
-        (.purple, "Study English", "7:30AM → 8:30AM", "Home"),
-        (.blue, "Physics Revision", "9:00AM → 10:30AM", "Library"),
-        (.orange, "Breakfast", "10:30AM → 11:00AM", "Cafe"),
-        (.green, "Project Development", "11:00AM → 12:30PM", "Workspace"),
-        (.pink, "Team Meeting", "1:00PM → 2:00PM", "Conference Room"),
-        (.indigo, "Mathematics", "2:30PM → 3:30PM", "Study Room"),
-        (.mint, "Take a Break", "3:30PM → 4:00PM", "Home"),
-        (.cyan, "Chemistry Revision", "4:00PM → 5:30PM", "Library"),
-        (.yellow, "Dinner", "6:00PM → 7:00PM", "Restaurant"),
-        (.red, "Gym", "7:30PM → 8:30PM", "ActiveSG"),
-        (.teal, "Coding Session", "9:00PM → 10:00PM", "Home"),
-        (.gray, "Plan Tomorrow", "10:00PM → 10:15PM", "Home")
-    ]
-
+    @Environment(\.calendar) private var calendar
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedDate = Date.now
     @State private var showingSheet = false
+    @State private var showingCalendarAlert = false
+    @State private var requestingCalendarAccess = false
+    @State private var calendarAccessError: String?
+    @State private var path: [CalendarEvent.ID] = []
     @Namespace private var eventZoom
 
+    let store: EventStore
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             HStack(spacing: 0) {
-                SideView()
+                SideView(selectedDate: $selectedDate)
                     .frame(width: 95)
 
                 eventList
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { Color.white.ignoresSafeArea() }
             .toolbar(.hidden, for: .navigationBar)
             .overlay(alignment: .bottomTrailing) {
                 addButton
             }
+            .navigationDestination(for: CalendarEvent.ID.self) { id in
+                EventDestination(store: store, id: id, selectedDate: $selectedDate) {
+                    if path.last == id {
+                        path.removeLast()
+                    }
+                }
+                .toolbar(.visible, for: .navigationBar)
+                .navigationTransition(.zoom(sourceID: id, in: eventZoom))
+            }
             .sheet(isPresented: $showingSheet) {
-                EmptyView()
-                // SheetView()
+                SheetView(selectedDate: selectedDate, store: store) { event in
+                    selectedDate = event.start
+                }
+            }
+            .alert("Calendar Access", isPresented: $showingCalendarAlert) {
+                if canRequestCalendarAccess {
+                    Button("Allow Calendar Access") {
+                        Task { await requestCalendarAccess() }
+                    }
+                } else if store.authorization == .denied {
+                    Button("Open Settings", action: openCalendarSettings)
+                }
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(calendarAccessMessage)
+            }
+        }
+        .task {
+            store.refresh()
+            if store.authorization == .notDetermined {
+                await requestCalendarAccess()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                store.refresh()
             }
         }
     }
 
-    // MARK: - Event List
-
     private var eventList: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 45) {
-                ForEach(0..<((events.count + 1) / 2), id: \.self) { pair in
-                    eventPair(pair)
+        let events = store.events(on: selectedDate, calendar: calendar)
+
+        return Group {
+            if events.isEmpty {
+                emptyAgenda
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 45) {
+                        ForEach(0..<((events.count + 1) / 2), id: \.self) { pair in
+                            VStack(alignment: .leading, spacing: 15) {
+                                ForEach(events.dropFirst(pair * 2).prefix(2)) { event in
+                                    eventRow(event)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(15)
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 90)
                 }
+                .scrollIndicators(.hidden)
+                .id(calendar.startOfDay(for: selectedDate))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(15)
-            .padding(.trailing, 20)
-            .padding(.bottom, 90)
         }
-        .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.white)
     }
 
-    private func eventPair(_ pair: Int) -> some View {
-        VStack(alignment: .leading, spacing: 15) {
-            ForEach(
-                (pair * 2)..<min(pair * 2 + 2, events.count),
-                id: \.self
-            ) { i in
-                eventRow(i)
+    private var emptyAgenda: some View {
+        VStack(spacing: 10) {
+            if requestingCalendarAccess {
+                ProgressView()
+                    .accessibilityLabel("Connecting to Calendar")
+            } else if store.authorization == .fullAccess {
+                Text("No Events")
+                    .accessibilityIdentifier("empty-events")
+            } else {
+                Text(calendarAccessMessage)
+
+                if canRequestCalendarAccess {
+                    Button("Allow Calendar Access") {
+                        Task { await requestCalendarAccess() }
+                    }
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                } else if store.authorization == .denied {
+                    Button("Open Settings", action: openCalendarSettings)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+                }
             }
         }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 20)
     }
 
-    // MARK: - Event Row
-
-    private func eventRow(_ i: Int) -> some View {
-        NavigationLink {
-            EventDetailView(event: calendarEvent(at: i))
-                .toolbar(.visible, for: .navigationBar)
-                .navigationTransition(
-                    .zoom(sourceID: i, in: eventZoom)
-                )
-        } label: {
-            event(
-                color: events[i].color,
-                title: events[i].title,
-                time: events[i].time,
-                place: events[i].place
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .background {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(.white)
-                    .matchedTransitionSource(id: i, in: eventZoom)
-            }
+    private func eventRow(_ event: CalendarEvent) -> some View {
+        NavigationLink(value: event.id) {
+            EventRow(event: event)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.white)
+                        .matchedTransitionSource(id: event.id, in: eventZoom)
+                }
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Add Button
-
     private var addButton: some View {
         Button {
-            showingSheet = true
+            if store.authorization == .fullAccess && !store.writableCalendars.isEmpty {
+                showingSheet = true
+            } else {
+                showingCalendarAlert = true
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 26, weight: .medium))
                 .foregroundStyle(.white)
                 .frame(width: 64, height: 64)
         }
-        .glassEffect(
-            .regular
-                .tint(.purple.opacity(0.65))
-                .interactive(),
-            in: .circle
-        )
+        .glassEffect(.regular.tint(.purple.opacity(0.65)).interactive(), in: .circle)
+        .accessibilityLabel("New Event")
         .padding(.trailing, 24)
         .padding(.bottom, -8)
     }
 
-    // MARK: - Event Conversion
-
-    private func calendarEvent(at index: Int) -> CalendarEvent {
-        let item = events[index]
-        let times = item.time.components(separatedBy: "→")
-
-        return CalendarEvent(
-            title: item.title,
-            start: parseTime(times.first ?? ""),
-            end: parseTime(times.last ?? ""),
-            location: item.place,
-            notes: "",
-            calendar: "Personal",
-            color: item.color
-        )
+    private var canRequestCalendarAccess: Bool {
+        store.authorization == .notDetermined || store.authorization == .writeOnly
     }
 
-    private func parseTime(_ value: String) -> Date {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mma"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
+    private var calendarAccessMessage: String {
+        switch store.authorization {
+        case .fullAccess:
+            return "Create a writable calendar in the Calendar app to add events."
+        case .denied:
+            return "Allow Full Access to Calendars in Settings to see and manage your events."
+        case .restricted:
+            return "Calendar access is restricted on this iPhone."
+        default:
+            return calendarAccessError ?? "Allow Full Access to Calendars to see and manage your events."
+        }
+    }
 
-        guard let time = formatter.date(
-            from: value.trimmingCharacters(in: .whitespaces)
-        ) else {
-            return .now
+    private func requestCalendarAccess() async {
+        guard !requestingCalendarAccess else { return }
+        requestingCalendarAccess = true
+        calendarAccessError = nil
+        defer {
+            requestingCalendarAccess = false
+            store.refresh()
         }
 
-        let parts = Calendar.current.dateComponents(
-            [.hour, .minute],
-            from: time
-        )
+        do {
+            try await store.requestCalendarAccess()
+        } catch {
+            calendarAccessError = error.localizedDescription
+        }
+    }
 
-        return Calendar.current.date(
-            bySettingHour: parts.hour ?? 0,
-            minute: parts.minute ?? 0,
-            second: 0,
-            of: .now
-        ) ?? .now
+    private func openCalendarSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            openURL(url)
+        }
+    }
+}
+
+private struct EventDestination: View {
+    @Environment(\.calendar) private var calendar
+    @State private var replacementID: CalendarEvent.ID?
+
+    let store: EventStore
+    let id: CalendarEvent.ID
+    @Binding var selectedDate: Date
+    let onDismiss: () -> Void
+
+    var body: some View {
+        if let event = store.event(withID: replacementID ?? id) {
+            EventDetailView(event: event, store: store, onUpdate: { updated in
+                replacementID = updated.id
+                let shownDay = calendar.dateInterval(of: .day, for: selectedDate)
+                if !calendar.isDate(updated.start, inSameDayAs: event.start)
+                    || shownDay.map({ !updated.overlaps($0) }) == true {
+                    selectedDate = updated.start
+                }
+            }, onDelete: onDismiss)
+        } else {
+            ContentUnavailableView("Event Unavailable", systemImage: "calendar")
+        }
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView(store: EventStore(defaults: nil))
 }

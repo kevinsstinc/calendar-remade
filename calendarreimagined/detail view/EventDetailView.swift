@@ -8,192 +8,170 @@
 import SwiftUI
 import UIKit
 
-struct CalendarEvent {
-    var title: String
-    var start: Date
-    var end: Date
-    var location: String
-    var notes: String
-    var calendar: String
-    var color: Color
-
-    static var sample: CalendarEvent {
-        let start = Calendar.current.date(
-            bySettingHour: 7, minute: 30, second: 0, of: .now
-        ) ?? .now
-
-        return CalendarEvent(
-            title: "Study English",
-            start: start,
-            end: start.addingTimeInterval(3600),
-            location: "Home",
-            notes: """
-            Complete English Paper 2 practice.
-
-            Focus on comprehension and summary writing.
-            Review mistakes from the previous paper.
-            """,
-            calendar: "Personal",
-            color: .purple
-        )
-    }
-}
-
 struct EventDetailView: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.calendar) private var calendar
 
-    @State private var event: CalendarEvent
-    @State private var showingEditor = false
+    let event: CalendarEvent
+    let store: EventStore
+    let onUpdate: (CalendarEvent) -> Void
+    let onDelete: () -> Void
+
+    @State private var editingEvent: CalendarEvent?
     @State private var showingDelete = false
-
-    var onUpdate: ((CalendarEvent) -> Void)?
-    var onDelete: (() -> Void)?
-
-    init(
-        event: CalendarEvent = .sample,
-        onUpdate: ((CalendarEvent) -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
-    ) {
-        _event = State(initialValue: event)
-        self.onUpdate = onUpdate
-        self.onDelete = onDelete
-    }
+    @State private var deleteError: String?
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
 
-                    // Event title and time
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(event.title)
-                            .font(.title.weight(.semibold))
+                // Event title and time
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(event.title)
+                        .font(.title.weight(.semibold))
 
-                        VStack(alignment: .leading, spacing: 5) {
-                            if Calendar.current.isDate(event.start, inSameDayAs: event.end) {
-                                Text(event.start, format: .dateTime
-                                    .weekday(.wide).month(.wide).day().year())
+                    VStack(alignment: .leading, spacing: 5) {
+                        if event.isAllDay {
+                            Text(allDayDates(style: .full))
 
-                                Text(timeRange)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text(event.start, format: .dateTime
-                                    .weekday(.abbreviated).month(.abbreviated)
-                                    .day().year().hour().minute())
+                            Text("All-day")
+                                .foregroundStyle(.secondary)
+                        } else if calendar.isDate(event.start, inSameDayAs: event.end) {
+                            Text(event.start, format: .dateTime
+                                .weekday(.wide).month(.wide).day().year())
 
-                                Text("to \(formattedEnd)")
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text(timeRange)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(event.start, format: .dateTime
+                                .weekday(.abbreviated).month(.abbreviated)
+                                .day().year().hour().minute())
 
-                            if let duration {
-                                Text(duration)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.top, 3)
-                            }
+                            Text("to \(formattedEnd)")
+                                .foregroundStyle(.secondary)
                         }
-                    }
 
-                    // Location
-                    if !event.location.isEmpty {
-                        detailRow("Location", icon: "mappin.and.ellipse") {
-                            Text(event.location)
-                                .textSelection(.enabled)
-                        }
-                    }
-
-                    // Calendar
-                    if !event.calendar.isEmpty {
-                        detailRow("Calendar", icon: "calendar") {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(event.color)
-                                    .frame(width: 9, height: 9)
-
-                                Text(event.calendar)
-                            }
-                        }
-                    }
-
-                    // Notes
-                    if !event.notes.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Notes")
-                                .font(.headline)
-
-                            Text(event.notes)
-                                .lineSpacing(3)
-                                .textSelection(.enabled)
+                        if !event.isAllDay, let duration {
+                            Text(duration)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 3)
                         }
                     }
                 }
-                .frame(maxWidth: 600, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-                .padding(.bottom, 36)
-            }
-            .background(Color(uiColor: .systemBackground))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-//                ToolbarItem(placement: .topBarLeading) {
-//                    Button {
-//                        dismiss()
-//                    } label: {
-//                        Image(systemName: "xmark")
-//                    }
-//                    .accessibilityLabel("Close")
-//                }
 
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                // Location
+                if !event.location.isEmpty {
+                    detailRow("Location", icon: "mappin.and.ellipse") {
+                        Text(event.location)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                // Calendar
+                if !event.calendar.isEmpty {
+                    detailRow("Calendar", icon: "calendar") {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(event.color)
+                                .frame(width: 9, height: 9)
+
+                            Text(event.calendar)
+                        }
+                    }
+                }
+
+                // Notes
+                if !event.notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Notes")
+                            .font(.headline)
+
+                        Text(event.notes)
+                            .lineSpacing(3)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .frame(maxWidth: 600, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 36)
+        }
+        .background(Color(uiColor: .systemBackground))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if event.isEditable {
                     Button {
-                        showingEditor = true
+                        editingEvent = event
                     } label: {
                         Image(systemName: "pencil")
                     }
                     .accessibilityLabel("Edit Event")
-
-                    Menu {
-                        ShareLink(item: shareText) {
-                            Label("Share Event", systemImage: "square.and.arrow.up")
-                        }
-
-                        Button {
-                            UIPasteboard.general.string = shareText
-                        } label: {
-                            Label("Copy Details", systemImage: "doc.on.doc")
-                        }
-
-                        if onDelete != nil {
-                            Button(role: .destructive) {
-                                showingDelete = true
-                            } label: {
-                                Label("Delete Event", systemImage: "trash")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .accessibilityLabel("More Actions")
                 }
+
+                Menu {
+                    ShareLink(item: shareText) {
+                        Label("Share Event", systemImage: "square.and.arrow.up")
+                    }
+
+                    Button {
+                        UIPasteboard.general.string = shareText
+                    } label: {
+                        Label("Copy Details", systemImage: "doc.on.doc")
+                    }
+
+                    if event.isEditable {
+                        Button(role: .destructive) {
+                            showingDelete = true
+                        } label: {
+                            Label(deleteTitle, systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .accessibilityLabel("More Actions")
             }
         }
-        .sheet(isPresented: $showingEditor) {
-            EventDetailEditor(event: event) { updated in
-                event = updated
-                onUpdate?(updated)
+        .sheet(item: $editingEvent) { original in
+            EventDetailEditor(event: original, store: store) { draft in
+                onUpdate(try store.update(draft, basedOn: original))
             }
         }
-        .confirmationDialog(
-            "Delete this event?",
-            isPresented: $showingDelete
-        ) {
-            Button("Delete Event", role: .destructive) {
-                onDelete?()
-                dismiss()
-            }
+        .confirmationDialog(deleteQuestion, isPresented: $showingDelete, titleVisibility: .visible) {
+            Button(deleteTitle, role: .destructive, action: delete)
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This event will be removed from your calendar.")
+            Text(event.isRecurring
+                 ? "Only this occurrence will be removed from your calendar."
+                 : "This event will be removed from your calendar.")
+        }
+        .alert("Couldn’t Delete Event", isPresented: Binding(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteError ?? "")
+        }
+    }
+
+    private var deleteTitle: LocalizedStringKey {
+        event.isRecurring ? "Delete This Occurrence" : "Delete Event"
+    }
+
+    private var deleteQuestion: LocalizedStringKey {
+        event.isRecurring ? "Delete this occurrence?" : "Delete this event?"
+    }
+
+    private func delete() {
+        do {
+            try store.delete(event)
+            onDelete()
+        } catch {
+            deleteError = error.localizedDescription
         }
     }
 
@@ -224,6 +202,9 @@ struct EventDetailView: View {
     // Date formatting
     private var timeRange: String {
         let formatter = DateIntervalFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateStyle = .none
         formatter.timeStyle = .short
         return formatter.string(from: event.start, to: event.end)
     }
@@ -245,14 +226,30 @@ struct EventDetailView: View {
         return formatter.string(from: seconds)
     }
 
+    private func allDayDates(style: DateIntervalFormatter.Style) -> String {
+        let formatter = DateIntervalFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateStyle = style
+        formatter.timeStyle = .none
+        let lastDay = calendar.startOfDay(for: max(event.start, event.end.addingTimeInterval(-1)))
+        return formatter.string(from: calendar.startOfDay(for: event.start), to: lastDay)
+    }
+
     private var shareText: String {
         let formatter = DateIntervalFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
 
+        let date = event.isAllDay
+            ? String(localized: "\(allDayDates(style: .medium)) (All-day)")
+            : formatter.string(from: event.start, to: event.end)
+
         return [
             event.title,
-            formatter.string(from: event.start, to: event.end),
+            date,
             event.location,
             event.notes
         ]
@@ -261,97 +258,8 @@ struct EventDetailView: View {
     }
 }
 
-// MARK: - Event Editor
-
-private struct EventDetailEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var draft: CalendarEvent
-
-    let onSave: (CalendarEvent) -> Void
-
-    init(event: CalendarEvent, onSave: @escaping (CalendarEvent) -> Void) {
-        _draft = State(initialValue: event)
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Title", text: $draft.title)
-                    TextField("Location", text: $draft.location)
-                }
-
-                Section("Date & Time") {
-                    DatePicker(
-                        "Starts",
-                        selection: startBinding,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
-
-                    DatePicker(
-                        "Ends",
-                        selection: $draft.end,
-                        in: draft.start...,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
-                }
-
-                Section("Calendar") {
-                    TextField("Calendar", text: $draft.calendar)
-
-                    ColorPicker(
-                        "Event Colour",
-                        selection: $draft.color,
-                        supportsOpacity: false
-                    )
-                }
-
-                Section("Notes") {
-                    TextField("Notes", text: $draft.notes, axis: .vertical)
-                        .lineLimit(5...10)
-                }
-            }
-            .navigationTitle("Edit Event")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        draft.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                        draft.location = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
-                        draft.calendar = draft.calendar.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        onSave(draft)
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(
-                        draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        draft.end <= draft.start
-                    )
-                }
-            }
-        }
-    }
-
-    private var startBinding: Binding<Date> {
-        Binding(
-            get: { draft.start },
-            set: { newStart in
-                let length = max(60, draft.end.timeIntervalSince(draft.start))
-                draft.start = newStart
-                draft.end = newStart.addingTimeInterval(length)
-            }
-        )
-    }
-}
-
 #Preview {
-    EventDetailView()
+    NavigationStack {
+        EventDetailView(event: .sample, store: EventStore(defaults: nil), onUpdate: { _ in }, onDelete: {})
+    }
 }

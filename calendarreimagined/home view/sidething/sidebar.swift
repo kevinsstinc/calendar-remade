@@ -8,99 +8,113 @@
 import SwiftUI
 
 struct SideView: View {
-    @State private var selected = 0
+    @Binding var selectedDate: Date
+    @Environment(\.calendar) private var calendar
+    @Environment(\.locale) private var locale
+    @State private var selectionBeforeDrag: Date?
+    @GestureState private var isDragging = false
     @Namespace private var glass
 
-    private var startOfWeek: Date {
-        let cal = Calendar.current
-        let now = Date()
-        let components = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)
-        return cal.date(from: components) ?? now
-    }
-
-    private func date(for index: Int) -> Date {
-        Calendar.current.date(byAdding: .day, value: index, to: startOfWeek) ?? Date()
+    private var week: [Date] {
+        let start = calendar.dateInterval(of: .weekOfYear, for: selectedDate)?.start
+            ?? calendar.startOfDay(for: selectedDate)
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        Rectangle()
+            .fill(.black)
+            .frame(width: 95)
+            .ignoresSafeArea()
+            .overlay {
+                GeometryReader { geometry in
+                    let days = week
+                    let rowHeight = geometry.size.height / CGFloat(max(1, days.count))
 
-            Rectangle()
-                .fill(.black)
-                .frame(width: 95)
-                .ignoresSafeArea()
-                .overlay {
-                    GeometryReader { geo in
-                        VStack(spacing: 0) {
-                            ForEach(0..<7, id: \.self) { i in
-                                let d = date(for: i)
-                                let dayText = DateFormatter.weekdayAbbrev.string(from: d).uppercased()
-                                let dateText = DateFormatter.dayNumber.string(from: d)
-
-                                DateCard(
-                                    day: dayText,
-                                    date: dateText,
-                                    isSelected: selected == i
-                                )
-                                .frame(width: 70, height: 100)
-                                .background {
-                                    if selected == i {
-                                        Color.clear
-                                            .glassEffect(
-                                                .regular.tint(.white.opacity(0.7)),
-                                                in: .rect(cornerRadius: 18)
-                                            )
-                                            .overlay {
-                                                RoundedRectangle(cornerRadius: 18)
-                                                    .stroke(.white.opacity(0.1), lineWidth: 1)
-                                            }
-                                            .matchedGeometryEffect(id: "glass", in: glass)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            }
+                    VStack(spacing: 0) {
+                        ForEach(days, id: \.self) { date in
+                            dayCard(for: date, rowHeight: rowHeight)
                         }
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    let rowHeight = geo.size.height / 7
-                                    guard rowHeight > 0 else { return }
-
-                                    let i = min(6, max(0, Int(value.location.y / rowHeight)))
-
-                                    if selected != i {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            selected = i
-                                        }
-                                    }
-                                }
-                        )
                     }
+                    .contentShape(Rectangle())
+                    .gesture(dateGesture(days: days, rowHeight: rowHeight))
                 }
+            }
+            .frame(maxHeight: .infinity)
+            .onChange(of: isDragging) { _, active in
+                if !active { selectionBeforeDrag = nil }
+            }
+    }
 
-                .frame(width: 95)
-                
+    private func dayCard(for date: Date, rowHeight: CGFloat) -> some View {
+        let isSelected = calendar.isDate(date, inSameDayAs: selectedDate)
+        let format = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+
+        return DateCard(
+            day: date.formatted(format.weekday(.abbreviated)).uppercased(with: locale),
+            date: date.formatted(format.day()),
+            isSelected: isSelected
+        )
+        .scaleEffect(min(1, rowHeight / 70))
+        .frame(width: 70, height: min(100, rowHeight))
+        .background {
+            if isSelected {
+                Color.clear
+                    .glassEffect(.regular.tint(.white.opacity(0.7)), in: .rect(cornerRadius: 18))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(.white.opacity(0.1), lineWidth: 1)
+                    }
+                    .matchedGeometryEffect(id: "glass", in: glass)
+            }
         }
-        .frame(maxHeight: .infinity)
-        .onAppear { selected = Calendar.current.dateComponents([.day], from: startOfWeek, to: Date()).day.map { min(6, max(0, $0)) } ?? 0 }
+        .frame(maxWidth: .infinity)
+        .frame(height: rowHeight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(date.formatted(format.weekday(.wide).month(.wide).day().year()))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { select(date) }
+        .accessibilityAction(named: Text("Previous Week")) { changeWeek(by: -1, from: selectedDate) }
+        .accessibilityAction(named: Text("Next Week")) { changeWeek(by: 1, from: selectedDate) }
+    }
+
+    private func dateGesture(days: [Date], rowHeight: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($isDragging) { _, active, _ in active = true }
+            .onChanged { value in
+                if selectionBeforeDrag == nil {
+                    selectionBeforeDrag = selectedDate
+                }
+                guard rowHeight > 0, !days.isEmpty,
+                      abs(value.translation.height) >= abs(value.translation.width) else { return }
+                let index = min(days.count - 1, max(0, Int(value.location.y / rowHeight)))
+                select(days[index])
+            }
+            .onEnded { value in
+                let start = selectionBeforeDrag ?? selectedDate
+                selectionBeforeDrag = nil
+                let horizontal = value.translation.width
+                guard abs(horizontal) >= 36,
+                      abs(horizontal) > abs(value.translation.height) else { return }
+                changeWeek(by: horizontal < 0 ? 1 : -1, from: start)
+            }
+    }
+
+    private func changeWeek(by offset: Int, from date: Date) {
+        if let newDate = calendar.date(byAdding: .weekOfYear, value: offset, to: date) {
+            select(newDate)
+        }
+    }
+
+    private func select(_ date: Date) {
+        guard !calendar.isDate(date, inSameDayAs: selectedDate) else { return }
+        withAnimation(.spring(response: 0.3)) {
+            selectedDate = calendar.startOfDay(for: date)
+        }
     }
 }
 
-private extension DateFormatter {
-    static let dayNumber: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("d")
-        return f
-    }()
-    
-    static let weekdayAbbrev: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("EEE")
-        return f
-    }()
-}
-
 #Preview {
-    SideView()
+    @Previewable @State var selectedDate = Date.now
+    SideView(selectedDate: $selectedDate)
 }
