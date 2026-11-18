@@ -11,7 +11,8 @@ struct EventDetailEditor: View {
     @Environment(\.calendar) private var calendar
     @Environment(\.dismiss) private var dismiss
     @State private var draft: CalendarEvent
-    @State private var saveError: String?
+    @State private var saveError = ""
+    @State private var showingSaveError = false
     @State private var hasChosenColor = false
 
     private let original: CalendarEvent
@@ -33,6 +34,8 @@ struct EventDetailEditor: View {
     }
 
     var body: some View {
+        let calendars = store.writableCalendars
+
         NavigationStack {
             Form {
                 Section {
@@ -59,7 +62,27 @@ struct EventDetailEditor: View {
 
                 Section("Calendar") {
                     if isNew || original.isAppleCalendarEvent {
-                        calendarPicker
+                        Picker("Calendar", selection: $draft.targetCalendarID) {
+                            if let id = draft.targetCalendarID {
+                                if !calendars.contains(where: { $0.id == id }) {
+                                    Text(draft.calendar).tag(Optional(id))
+                                }
+                            } else {
+                                Text(calendars.isEmpty ? "No Writable Calendars" : "Choose Calendar")
+                                    .tag(nil as String?)
+                            }
+
+                            ForEach(calendars) { option in
+                                Text(option.source.isEmpty ? option.title : "\(option.title) (\(option.source))")
+                                    .tag(Optional(option.id))
+                            }
+                        }
+                        .onChange(of: draft.targetCalendarID) { _, id in
+                            if isNew, !hasChosenColor,
+                               let selected = calendars.first(where: { $0.id == id }) {
+                                draft.color = selected.color
+                            }
+                        }
                     } else {
                         TextField("Calendar", text: $draft.calendar)
                     }
@@ -105,38 +128,11 @@ struct EventDetailEditor: View {
                     .accessibilityLabel(isNew ? "Add Event" : "Save")
                 }
             }
-            .alert("Couldn’t Save Event", isPresented: Binding(
-                get: { saveError != nil },
-                set: { if !$0 { saveError = nil } }
-            )) {
+            .alert("Couldn’t Save Event", isPresented: $showingSaveError) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(saveError ?? "")
+                Text(saveError)
             }
-        }
-    }
-
-    private var calendarPicker: some View {
-        let options = store.writableCalendars
-
-        return Picker("Calendar", selection: $draft.targetCalendarID) {
-            if let id = draft.targetCalendarID {
-                if !options.contains(where: { $0.id == id }) {
-                    Text(draft.calendar).tag(Optional(id))
-                }
-            } else {
-                Text(options.isEmpty ? "No Writable Calendars" : "Choose Calendar").tag(nil as String?)
-            }
-
-            ForEach(options, id: \.id) { option in
-                Text(option.source.isEmpty ? option.title : "\(option.title) (\(option.source))")
-                    .tag(Optional(option.id))
-            }
-        }
-        .onChange(of: draft.targetCalendarID) { _, nextID in
-            guard isNew, !hasChosenColor,
-                  let next = options.first(where: { $0.id == nextID }) else { return }
-            draft.color = next.color
         }
     }
 
@@ -247,6 +243,7 @@ struct EventDetailEditor: View {
             dismiss()
         } catch {
             saveError = error.localizedDescription
+            showingSaveError = true
         }
     }
 }

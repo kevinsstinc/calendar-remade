@@ -19,7 +19,12 @@ struct CalendarEvent: Identifiable, Codable {
     }
 
     private var localID = UUID()
-    var id: ID { appleOccurrence.map(ID.apple) ?? .local(localID) }
+    var id: ID {
+        if let appleOccurrence {
+            return .apple(appleOccurrence)
+        }
+        return .local(localID)
+    }
 
     var title: String
     var start: Date

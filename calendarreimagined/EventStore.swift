@@ -78,7 +78,7 @@ final class EventStore {
                     id: calendar.calendarIdentifier,
                     title: calendar.title,
                     source: calendar.source?.title ?? "",
-                    color: calendar.cgColor.map { Color(cgColor: $0) } ?? .purple
+                    color: calendar.eventColor
                 )
             }
             .sorted { lhs, rhs in
@@ -117,80 +117,86 @@ final class EventStore {
     }
 
     func add(_ draft: CalendarEvent) throws -> CalendarEvent {
-        try validate(draft)
-        let calendar = try writableCalendar(withID: draft.targetCalendarID ?? defaultCalendarID)
-        let event = EKEvent(eventStore: calendarStore)
-        event.calendar = calendar
-        event.title = draft.title
-        event.isAllDay = draft.isAllDay
-        event.timeZone = draft.isAllDay ? nil : .current
-        event.startDate = draft.start
-        event.endDate = eventKitEndDate(for: draft)
-        event.location = draft.location.isEmpty ? nil : draft.location
-        event.notes = draft.notes.isEmpty ? nil : draft.notes
-
-        try calendarStore.save(event, span: .thisEvent, commit: true)
-        if let reference = reference(to: event),
-           let color = calendar.cgColor,
-           draft.resolvedColor != Color(cgColor: color).resolve(in: EnvironmentValues()) {
-            eventColors[reference.colorKey] = draft.resolvedColor
-            persistColors()
-        }
-        refresh()
-        return snapshot(event) ?? draft
+        try saveToCalendar(draft, original: nil)
     }
 
     func update(_ draft: CalendarEvent, basedOn original: CalendarEvent) throws -> CalendarEvent {
-        let preservedZeroDuration = !original.isAllDay && !draft.isAllDay && original.start == original.end
-        try validate(draft, allowsZeroDuration: preservedZeroDuration)
+        if original.isAppleCalendarEvent {
+            return try saveToCalendar(draft, original: original)
+        }
 
-        guard let originalReference = original.appleOccurrence else {
-            guard let index = localEvents.firstIndex(where: { $0.id == original.id }) else {
-                throw CalendarStoreError.eventUnavailable
+        try validate(draft, original: original)
+        guard let index = localEvents.firstIndex(where: { $0.id == original.id }) else {
+            throw CalendarStoreError.eventUnavailable
+        }
+        localEvents[index] = draft
+        persistLocalEvents()
+        return draft
+    }
+
+    private func saveToCalendar(_ draft: CalendarEvent, original: CalendarEvent?) throws -> CalendarEvent {
+        try validate(draft, original: original)
+        try checkAuthorization()
+
+        let event: EKEvent
+        if let original {
+            event = try editableOccurrence(original)
+            if draft.targetCalendarID != original.targetCalendarID {
+                event.calendar = try writableCalendar(draft.targetCalendarID)
             }
-            localEvents[index] = draft
-            persistLocalEvents()
-            return draft
+        } else {
+            event = EKEvent(eventStore: calendarStore)
+            event.calendar = try writableCalendar(draft.targetCalendarID ?? defaultCalendarID)
         }
 
-        let event = try editableOccurrence(original)
-        if draft.targetCalendarID != original.targetCalendarID {
-            event.calendar = try writableCalendar(withID: draft.targetCalendarID)
-        }
-        if draft.title != original.title { event.title = draft.title }
-        if draft.location != original.location { event.location = draft.location.isEmpty ? nil : draft.location }
-        if draft.notes != original.notes { event.notes = draft.notes.isEmpty ? nil : draft.notes }
-        if draft.isAllDay != original.isAllDay {
+        // Setting location again can replace the event's existing map coordinates.
+        if draft.title != original?.title { event.title = draft.title }
+        if draft.location != original?.location { event.location = draft.location.isEmpty ? nil : draft.location }
+        if draft.notes != original?.notes { event.notes = draft.notes.isEmpty ? nil : draft.notes }
+
+        let changedAllDay = draft.isAllDay != original?.isAllDay
+        if changedAllDay {
             event.isAllDay = draft.isAllDay
             event.timeZone = draft.isAllDay ? nil : .current
-            event.startDate = draft.start
-            event.endDate = eventKitEndDate(for: draft)
-        } else {
-            if draft.start != original.start { event.startDate = draft.start }
-            if draft.end != original.end { event.endDate = eventKitEndDate(for: draft) }
         }
+        if changedAllDay || draft.start != original?.start { event.startDate = draft.start }
+        if changedAllDay || draft.end != original?.end { event.endDate = eventKitEndDate(for: draft) }
 
-        if event.hasChanges {
+        if original == nil || event.hasChanges {
             try calendarStore.save(event, span: .thisEvent, commit: true)
         }
-        if let savedReference = reference(to: event) {
-            let colorWasEdited = draft.resolvedColor != original.resolvedColor
-            if colorWasEdited || originalReference.colorKey != savedReference.colorKey {
-                let previousColor = eventColors.removeValue(forKey: originalReference.colorKey)
-                eventColors[savedReference.colorKey] = colorWasEdited ? draft.resolvedColor : previousColor
-                persistColors()
-            }
-        }
+        saveColor(draft, original: original, for: event)
         refresh()
-        return snapshot(event) ?? original
+        return snapshot(event) ?? original ?? draft
+    }
+
+    private func saveColor(_ draft: CalendarEvent, original: CalendarEvent?, for event: EKEvent) {
+        guard let calendar = event.calendar, let newKey = reference(to: event)?.colorKey else { return }
+        let oldKey = original?.appleOccurrence?.colorKey
+        let oldColor = original?.resolvedColor ?? calendar.eventColor.resolve(in: EnvironmentValues())
+
+        if draft.resolvedColor != oldColor {
+            if let oldKey, oldKey != newKey {
+                eventColors.removeValue(forKey: oldKey)
+            }
+            eventColors[newKey] = draft.resolvedColor
+        } else if let oldKey, oldKey != newKey,
+                  let color = eventColors.removeValue(forKey: oldKey) {
+            eventColors[newKey] = color
+        } else {
+            return
+        }
+        persistColors()
     }
 
     func delete(_ event: CalendarEvent) throws {
         if let reference = event.appleOccurrence {
+            try checkAuthorization()
             let occurrence = try editableOccurrence(event)
             try calendarStore.remove(occurrence, span: .thisEvent, commit: true)
-            eventColors.removeValue(forKey: reference.colorKey)
-            persistColors()
+            if eventColors.removeValue(forKey: reference.colorKey) != nil {
+                persistColors()
+            }
             refresh()
         } else {
             localEvents.removeAll { $0.id == event.id }
@@ -198,11 +204,16 @@ final class EventStore {
         }
     }
 
-    private func appleEvents(in interval: DateInterval, calendars: [EKCalendar]? = nil) -> [EKEvent] {
-        // Reading revision lets SwiftUI observe changes to the external store.
+    private func appleEvents(in interval: DateInterval, calendarID: String? = nil) -> [EKEvent] {
+        // EventKit changes don't update SwiftUI on their own.
         _ = revision
         guard defaults != nil, authorization == .fullAccess,
               EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
+        var calendars: [EKCalendar]?
+        if let calendarID {
+            guard let calendar = calendarStore.calendar(withIdentifier: calendarID) else { return [] }
+            calendars = [calendar]
+        }
         let predicate = calendarStore.predicateForEvents(
             withStart: interval.start, end: interval.end, calendars: calendars
         )
@@ -210,15 +221,12 @@ final class EventStore {
     }
 
     private func findOccurrence(_ reference: CalendarEvent.AppleOccurrence) -> EKEvent? {
-        guard authorization == .fullAccess,
-              EKEventStore.authorizationStatus(for: .event) == .fullAccess,
-              let calendar = calendarStore.calendar(withIdentifier: reference.calendarID) else { return nil }
+        // An EventKit id can belong to more than one occurrence of a repeating event.
         let search = DateInterval(start: reference.start.addingTimeInterval(-1), duration: 2)
-        return appleEvents(in: search, calendars: [calendar]).first { self.reference(to: $0) == reference }
+        return appleEvents(in: search, calendarID: reference.calendarID).first { self.reference(to: $0) == reference }
     }
 
     private func editableOccurrence(_ original: CalendarEvent) throws -> EKEvent {
-        try checkAuthorization()
         guard let reference = original.appleOccurrence, let event = findOccurrence(reference) else {
             throw CalendarStoreError.eventUnavailable
         }
@@ -232,8 +240,7 @@ final class EventStore {
         return event
     }
 
-    private func writableCalendar(withID identifier: String?) throws -> EKCalendar {
-        try checkAuthorization()
+    private func writableCalendar(_ identifier: String?) throws -> EKCalendar {
         guard let identifier else { throw CalendarStoreError.noWritableCalendar }
         guard let calendar = calendarStore.calendar(withIdentifier: identifier),
               calendar.allowsContentModifications else { throw CalendarStoreError.calendarUnavailable }
@@ -241,15 +248,17 @@ final class EventStore {
     }
 
     private func checkAuthorization() throws {
-        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+        guard defaults != nil, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
             refresh()
             throw CalendarStoreError.accessRequired
         }
     }
 
-    private func validate(_ event: CalendarEvent, allowsZeroDuration: Bool = false) throws {
+    private func validate(_ event: CalendarEvent, original: CalendarEvent?) throws {
+        let wasInstant = original.map { !$0.isAllDay && $0.start == $0.end } ?? false
+        let keepsInstant = wasInstant && !event.isAllDay && event.start == event.end
         guard !event.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              event.end > event.start || (allowsZeroDuration && event.end == event.start) else {
+              event.end > event.start || keepsInstant else {
             throw CalendarStoreError.invalidEvent
         }
     }
@@ -283,7 +292,6 @@ final class EventStore {
         guard let calendar = event.calendar, let end = event.endDate,
               let reference = reference(to: event) else { return nil }
 
-        let initialColor = calendar.cgColor.map { Color(cgColor: $0) } ?? .purple
         let title = event.title ?? ""
         var snapshot = CalendarEvent(
             title: title.isEmpty ? "Untitled Event" : title,
@@ -292,7 +300,7 @@ final class EventStore {
             location: event.location ?? "",
             notes: event.notes ?? "",
             calendar: calendar.title,
-            color: eventColors[reference.colorKey].map { Color($0) } ?? initialColor
+            color: eventColors[reference.colorKey].map { Color($0) } ?? calendar.eventColor
         )
         snapshot.appleOccurrence = reference
         snapshot.targetCalendarID = reference.calendarID
@@ -313,6 +321,12 @@ final class EventStore {
         if let data = try? JSONEncoder().encode(eventColors) {
             defaults?.set(data, forKey: Self.colorsKey)
         }
+    }
+}
+
+private extension EKCalendar {
+    var eventColor: Color {
+        cgColor.map { Color(cgColor: $0) } ?? .purple
     }
 }
 

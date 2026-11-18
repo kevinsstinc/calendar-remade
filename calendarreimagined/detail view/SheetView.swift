@@ -31,7 +31,6 @@ struct SheetView: View {
         }
 
         let target = store.writableCalendars.first { $0.id == store.defaultCalendarID }
-            ?? store.writableCalendars.first
         var event = CalendarEvent(
             title: "",
             start: start,

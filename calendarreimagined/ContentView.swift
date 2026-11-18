@@ -184,10 +184,7 @@ struct ContentView: View {
         guard !requestingCalendarAccess else { return }
         requestingCalendarAccess = true
         calendarAccessError = nil
-        defer {
-            requestingCalendarAccess = false
-            store.refresh()
-        }
+        defer { requestingCalendarAccess = false }
 
         do {
             try await store.requestCalendarAccess()
@@ -216,9 +213,10 @@ private struct EventDestination: View {
         if let event = store.event(withID: replacementID ?? id) {
             EventDetailView(event: event, store: store, onUpdate: { updated in
                 replacementID = updated.id
-                let shownDay = calendar.dateInterval(of: .day, for: selectedDate)
-                if !calendar.isDate(updated.start, inSameDayAs: event.start)
-                    || shownDay.map({ !updated.overlaps($0) }) == true {
+                if !calendar.isDate(updated.start, inSameDayAs: event.start) {
+                    selectedDate = updated.start
+                } else if let shownDay = calendar.dateInterval(of: .day, for: selectedDate),
+                          !updated.overlaps(shownDay) {
                     selectedDate = updated.start
                 }
             }, onDelete: onDismiss)
