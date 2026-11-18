@@ -12,6 +12,8 @@ the video shows the app in a mac catalyst preview.
 | --- | --- |
 | <img src="docs/media/agenda.png" alt="weekly agenda" width="220"> | <img src="docs/media/event.png" alt="event details" width="220"> |
 
+https://github.com/user-attachments/assets/35371aaa-9c67-41fd-9162-081af687130a
+
 [watch the screen recording](docs/media/demo.mp4)
 
 ## using it
