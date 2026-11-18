@@ -13,15 +13,12 @@ struct ContentView: View {
     @State private var calendarAccessError: String?
     @State private var path: [CalendarEvent.ID] = []
     @Namespace private var eventZoom
-
     let store: EventStore
-
     var body: some View {
         NavigationStack(path: $path) {
             HStack(spacing: 0) {
                 SideView(selectedDate: $selectedDate)
                     .frame(width: 95)
-
                 eventList
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

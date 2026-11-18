@@ -5,6 +5,7 @@
 //  Created by Joseph Kevin Fredric on 14/11/26.
 //
 
+import EventKit
 import SwiftUI
 
 struct SheetView: View {
@@ -15,12 +16,6 @@ struct SheetView: View {
     let onAdd: (CalendarEvent) -> Void
 
     var body: some View {
-        EventDetailEditor(event: newEvent, store: store, isNew: true) { draft in
-            onAdd(try store.add(draft))
-        }
-    }
-
-    private var newEvent: CalendarEvent {
         let now = Date.now
         let start: Date
 
@@ -30,7 +25,7 @@ struct SheetView: View {
             start = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: selectedDate) ?? selectedDate
         }
 
-        let target = store.writableCalendars.first { $0.id == store.defaultCalendarID }
+        let target = store.defaultCalendar
         var event = CalendarEvent(
             title: "",
             start: start,
@@ -38,10 +33,13 @@ struct SheetView: View {
             location: "",
             notes: "",
             calendar: target?.title ?? "",
-            color: target?.color ?? .purple
+            color: target?.eventColor ?? .purple
         )
-        event.targetCalendarID = target?.id
-        return event
+        event.targetCalendarID = target?.calendarIdentifier
+
+        return EventDetailEditor(event: event, store: store, isNew: true) { draft in
+            onAdd(try store.add(draft))
+        }
     }
 }
 

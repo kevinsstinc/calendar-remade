@@ -23,8 +23,6 @@ struct EventDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-
-                // Event title and time
                 VStack(alignment: .leading, spacing: 12) {
                     Text(event.title)
                         .font(.title.weight(.semibold))
@@ -58,16 +56,12 @@ struct EventDetailView: View {
                         }
                     }
                 }
-
-                // Location
                 if !event.location.isEmpty {
                     detailRow("Location", icon: "mappin.and.ellipse") {
                         Text(event.location)
                             .textSelection(.enabled)
                     }
                 }
-
-                // Calendar
                 if !event.calendar.isEmpty {
                     detailRow("Calendar", icon: "calendar") {
                         HStack(spacing: 8) {
@@ -175,7 +169,6 @@ struct EventDetailView: View {
         }
     }
 
-    // Reusable detail row
     private func detailRow<Content: View>(
         _ title: String,
         icon: String,
@@ -198,8 +191,6 @@ struct EventDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
-
-    // Date formatting
     private var timeRange: String {
         let formatter = DateIntervalFormatter()
         formatter.calendar = calendar
@@ -263,3 +254,4 @@ struct EventDetailView: View {
         EventDetailView(event: .sample, store: EventStore(defaults: nil), onUpdate: { _ in }, onDelete: {})
     }
 }
+// hello yes this was also changed a bit
