@@ -8,9 +8,7 @@ the screenshots and recording use fictional events.
 
 the video shows the app in a mac catalyst preview.
 
-| agenda | event |
-| --- | --- |
-| <img src="docs/media/agenda.png" alt="weekly agenda" width="220"> | <img src="docs/media/event.png" alt="event details" width="220"> |
+| <img width="322" height="688" alt="image" src="https://github.com/user-attachments/assets/ce33228d-aa5c-4649-b0e3-fad85a6319a5" /> |
 
 
 https://github.com/user-attachments/assets/32fd2641-7387-431e-9683-7ab23d138fae
